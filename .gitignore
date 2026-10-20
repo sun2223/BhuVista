@@ -1,3 +1,8 @@
 .DS_Store
 .env
 node_modules/
+
+# Avoid committing credentials and local build artifacts.
+.env.*
+!.env.example
+coverage/

@@ -9,9 +9,11 @@ test('health reports local availability without claiming official connectivity',
  const r=await fetch(`${base}/api/health`);const o=await r.json();assert.equal(r.status,200);assert.equal(o.ok,true);assert.match(o.officialConnection,/not tested/);
 });
 test('frontend files and config are served',async()=>{
- const [page,app,cfg]=await Promise.all([fetch(base),fetch(`${base}/app.js`),fetch(`${base}/api/config`)]);
+ const [page,app,measure,share,cfg]=await Promise.all([fetch(base),fetch(`${base}/app.js`),fetch(`${base}/measure.js`),fetch(`${base}/map-link.js`),fetch(`${base}/api/config`)]);
  assert.equal(page.status,200);assert.match(await page.text(),/BhuVista/);
  assert.equal(app.status,200);assert.match(await app.text(),/function selectPlot/);
+ assert.equal(measure.status,200);assert.match(await measure.text(),/distanceBetween/);
+ assert.equal(share.status,200);assert.match(await share.text(),/makeMapQuery/);
  assert.equal((await cfg.json()).officialPortal,'https://bhunaksha.bihar.gov.in/10/indexmain.jsp');
 });
 test('reject missing or unsafe location inputs before contacting government service',async()=>{

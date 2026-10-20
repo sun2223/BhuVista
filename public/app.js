@@ -1,3 +1,4 @@
+import {makeMapQuery,readMapQuery,validVillageCodes} from './map-link.js';
 import {pathDistance,polygonArea,formatDistance,formatArea} from './measure.js';
 /* BhuVista: two modes, a self-contained example and an official WMS image overlay.
  * Never treat the overlay as survey-grade or automatically infer ownership. */
@@ -215,9 +216,9 @@ function updateMode(mode){resetMeasurement();++state.lookupToken;releasePlotPrev
 function populateLevels(){const c=$('level-fields');c.innerHTML='';LEVEL_NAMES.forEach((name,index)=>{
  const div=document.createElement('div');div.className='level-field';const label=document.createElement('label');label.textContent=name;label.htmlFor=`level-${index}`;
  const select=document.createElement('select');select.id=`level-${index}`;select.disabled=index!==0;select.innerHTML='<option value="">Select…</option>';select.addEventListener('change',()=>onLevelChange(index));div.append(label,select);c.append(div);state.levels.push(select);
- });loadLevel(0).catch(e=>toast(e.message));}
+ });return loadLevel(0).catch(e=>toast(e.message));}
 async function loadLevel(index){if(index>=7)return;const codes=state.levels.slice(0,index).map(s=>s.value).join(',');const sel=state.levels[index];sel.innerHTML='<option value="">Loading…</option>';sel.disabled=true;
- try{const data=await api(`/api/levels?level=${index}&codes=${encodeURIComponent(codes)}`);sel.innerHTML='<option value="">Select…</option>';for(const opt of data.options){const option=document.createElement('option');option.value=opt.code;option.textContent=`${opt.code} ${opt.label}`;sel.appendChild(option);}sel.disabled=false;if(data.options.length===1){sel.value=data.options[0].code;onLevelChange(index);}}
+ try{const data=await api(`/api/levels?level=${index}&codes=${encodeURIComponent(codes)}`);sel.innerHTML='<option value="">Select…</option>';for(const opt of data.options){const option=document.createElement('option');option.value=opt.code;option.textContent=`${opt.code} ${opt.label}`;sel.appendChild(option);}sel.disabled=false;if(data.options.length===1&&!state.restoringView){sel.value=data.options[0].code;onLevelChange(index);}}
  catch(e){sel.innerHTML='<option value="">Service unavailable</option>';if(index===0)toast(`Official Bihar location service unavailable: ${e.message}`);}
 }
 function onLevelChange(index){++state.lookupToken;releasePlotPreview();state.sheet=null;$('official-plot-input').disabled=true;$('official-plot-button').disabled=true;for(let i=index+1;i<7;i++){state.levels[i].value='';state.levels[i].disabled=true;state.levels[i].innerHTML='<option value="">Select…</option>';}$('load-sheet').disabled=!state.levels.every(x=>x.value);if(state.levels[index].value&&index<6)loadLevel(index+1).catch(e=>toast(e.message));}
@@ -226,14 +227,60 @@ async function loadSheet(){const codes=state.levels.map(s=>s.value);if(codes.som
  if(state.mapKind==='google'){state.overlay=new google.maps.GroundOverlay(d.mapImage,d.bounds,{opacity:state.opacity,clickable:false});state.overlay.setMap(state.map);}
  else{state.overlay=L.imageOverlay(d.mapImage,[[d.bounds.south,d.bounds.west],[d.bounds.north,d.bounds.east]],{opacity:state.opacity,interactive:false}).addTo(state.map);}
  fitBounds(d.bounds);refreshStyle();$('official-plot-input').disabled=false;$('official-plot-button').disabled=false;$('area-label').textContent=state.levels[3].selectedOptions[0]?.textContent||'Bihar cadastral map';$('source-status').textContent='Government map imagery';$('detail-source').textContent='LIVE OFFICIAL MAP';$('detail-title').textContent='BhuNaksha overlay';$('detail-body').innerHTML='<div class="notice">This is official cadastral map imagery, but placement over satellite imagery is approximate. Click a location to attempt official plot identification. Blank or unsupported replies are not proof of ownership.</div>';
- toast('Official cadastral map requested. Boundaries may be displaced due to georeferencing.');
+ rememberVillage(codes);toast('Official cadastral map requested. Boundaries may be displaced due to georeferencing.');
  }catch(e){toast(`Could not load official map: ${e.message}`);}finally{btn.disabled=false;btn.innerHTML='Overlay official village map <span>↗</span>';}}
 async function importFile(file){if(!file)return;try{if(file.size>10*1024*1024)throw Error('Maximum file size 10 MB.');const json=JSON.parse(await file.text());if(json.type!=='FeatureCollection'||!Array.isArray(json.features))throw Error('Expected a GeoJSON FeatureCollection.');if(json.crs&&!/4326|crs84/i.test(JSON.stringify(json.crs)))throw Error('Reproject the file to WGS84 (EPSG:4326) before importing.');
  const features=json.features.filter(f=>['Polygon','MultiPolygon'].includes(f.geometry?.type)).slice(0,3000).map((f,i)=>({type:'Feature',properties:{plotNo:String(f.properties?.plotNo??f.properties?.plot_no??f.properties?.KHESRA??f.properties?.khesra??f.properties?.khasra??f.properties?.PLOT_NO??`Unknown-${i+1}`),category:f.properties?.category??f.properties?.land_use??'',village:f.properties?.village??f.properties?.mauza??'Imported village'},geometry:f.geometry}));
  if(!features.length)throw Error('No polygon features found.');const coords=allCoordinates(features);if(coords.length>200000)throw Error('File has too many vertices.');if(coords.some(p=>!Array.isArray(p)||p.length<2||!Number.isFinite(p[0])||!Number.isFinite(p[1])||Math.abs(p[0])>180||Math.abs(p[1])>90))throw Error('Coordinates must be longitude/latitude in WGS84 (EPSG:4326).');
  const data={type:'FeatureCollection',features};state.mode='imported';drawDataset(data);$('area-label').textContent=`Imported · ${file.name}`;$('source-status').textContent='Your GeoJSON (unverified)';$('map-hint').textContent='✧ Click a polygon from your imported file';toast(`${features.length} parcel geometries loaded. Data remains in this browser tab.`);
  }catch(e){toast('Import failed: '+e.message);}finally{$('import-file').value='';}}
+function mapCamera(){
+ if(state.mapKind==='google'){
+  const c=state.map.getCenter();return {lat:c.lat(),lng:c.lng(),zoom:state.map.getZoom()};
+ }
+ const c=state.map.getCenter();return {lat:c.lat,lng:c.lng,zoom:state.map.getZoom()};
+}
+function setMapCamera({lat,lng,zoom}){
+ if(state.mapKind==='google'){state.map.setCenter({lat,lng});state.map.setZoom(zoom);}
+ else state.map.setView([lat,lng],zoom);
+}
+function savedVillage(){
+ try{const c=JSON.parse(localStorage.getItem('bhuvista-last-village')||'null');return validVillageCodes(c)?c:null;}
+ catch{return null;}
+}
+function rememberVillage(codes){
+ try{localStorage.setItem('bhuvista-last-village',JSON.stringify(codes));$('restore-village').classList.remove('hidden');}
+ catch{/* Private browsing may block localStorage. */}
+}
+async function restoreVillage(codes){
+ if(!validVillageCodes(codes)){toast('No saved village found.');return false;}
+ state.restoringView=true;
+ try{
+  for(let i=0;i<7;i++){
+   const sel=state.levels[i];
+   if(![...sel.options].some(o=>o.value===codes[i]))throw new Error('The government location list has changed. Select your village manually.');
+   sel.value=codes[i];
+   if(i<6)await loadLevel(i+1);
+  }
+  $('load-sheet').disabled=false;
+  await loadSheet();
+  return Boolean(state.sheet);
+ }catch(e){toast(`Could not reopen village: ${e.message}`);return false;}
+ finally{state.restoringView=false;}
+}
+async function copyMapView(){
+ if(state.mode==='imported'){toast('Imported GeoJSON stays on this device; it cannot be included in a shareable link.');return;}
+ try{
+  const camera=mapCamera();
+  const query=makeMapQuery({...camera,mode:state.mode,base:state.base,codes:state.sheet?state.levels.map(x=>x.value):null});
+  const link=`${location.origin}${location.pathname}?${query}`;
+  if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(link);toast('Map link copied! It works on other devices after you deploy the website.');}
+  else{window.prompt('Copy this map view URL:',link);}
+ }catch(e){toast(e.message||'Could not copy view.');}
+}
 async function boot(){
+ $('share-view').addEventListener('click',copyMapView);
+ $('restore-village').addEventListener('click',async()=>{updateMode('official');await restoreVillage(savedVillage());});
  $('measure-toggle').addEventListener('click',()=>setMeasurementActive(!state.measure.active));
  $('measure-distance').addEventListener('click',()=>chooseMeasureType('distance'));
  $('measure-area').addEventListener('click',()=>chooseMeasureType('area'));
@@ -243,6 +290,15 @@ async function boot(){
  $('tab-demo').addEventListener('click',()=>updateMode('demo'));$('tab-official').addEventListener('click',()=>updateMode('official'));
  $('plot-search').addEventListener('keydown',e=>{if(e.key==='Enter')selectPlot($('plot-search').value.trim());});$('search-button').addEventListener('click',()=>selectPlot($('plot-search').value.trim()));$('try-1206').addEventListener('click',()=>{state.mode==='official'&&updateMode('demo');selectPlot('1206');});$('try-1211').addEventListener('click',()=>{state.mode==='official'&&updateMode('demo');selectPlot('1211');});
  $('import-file').addEventListener('change',e=>importFile(e.target.files?.[0]));$('load-sheet').addEventListener('click',loadSheet);$('official-plot-button').addEventListener('click',requestOfficialPlot);$('official-plot-input').addEventListener('keydown',e=>{if(e.key==='Enter')requestOfficialPlot();});$('opacity').addEventListener('input',e=>{state.opacity=Number(e.target.value)/100;$('opacity-value').textContent=`${e.target.value}%`;refreshStyle();});$('boundary-toggle').addEventListener('change',e=>{state.showBoundaries=e.target.checked;refreshStyle();});document.querySelectorAll('.base-btn').forEach(btn=>btn.addEventListener('click',()=>setBase(btn.dataset.base)));$('close-detail').addEventListener('click',()=>$('detail-card').style.display='none');$('open-sidebar').addEventListener('click',()=>document.body.classList.add('sidebar-open'));$('close-sidebar').addEventListener('click',()=>document.body.classList.remove('sidebar-open'));
- try{const config=await api('/api/config');state.googleKey=config.googleMapsApiKey||'';if(state.googleKey){try{await loadGoogle(state.googleKey);initGoogle();}catch(e){initLeaflet();toast('Google Maps unavailable, using alternate map tiles. '+e.message);}}else initLeaflet();setBase('satellite');updateMode('demo');populateLevels();}catch(e){toast('Map startup failed: '+e.message);$('map').innerHTML='<div style="padding:130px 40px">Unable to load map. Check internet connectivity.</div>';}
+ try{const config=await api('/api/config');state.googleKey=config.googleMapsApiKey||'';if(state.googleKey){try{await loadGoogle(state.googleKey);initGoogle();}catch(e){initLeaflet();toast('Google Maps unavailable, using alternate map tiles. '+e.message);}}else initLeaflet();const shared=readMapQuery(location.search);
+  setBase(shared?.base||'satellite');updateMode(shared?.mode||'demo');
+  if(savedVillage())$('restore-village').classList.remove('hidden');
+  await populateLevels();
+  if(shared?.mode==='official'&&shared.codes){
+   const loaded=await restoreVillage(shared.codes);
+   if(!loaded)toast('Shared map location could not be loaded; check the official selectors.');
+  }
+  if(shared)setMapCamera(shared);
+ }catch(e){toast('Map startup failed: '+e.message);$('map').innerHTML='<div style="padding:130px 40px">Unable to load map. Check internet connectivity.</div>';}
 }
 boot();

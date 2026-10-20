@@ -26,3 +26,7 @@
 .measure-warning{display:block;margin-top:12px;font-size:10px;line-height:1.5;color:#ab8552}
 @media(max-width:1050px){.measure-panel{max-width:calc(100% - 270px)}}
 @media(max-width:760px){.measure-panel{top:255px;left:12px;width:min(255px,calc(100% - 24px));max-width:none;padding:12px}.measure-heading span{display:none}}
+
+/* Shareable public map views and last village shortcut. */
+.share-action{background:#fff;border-color:#cbded3;color:#2f6950}
+.restore-village{width:100%;margin-top:10px;padding:11px;border:1px dashed #badcc9;border-radius:9px;background:#f4faf6;color:#337956;font-weight:800;font-size:11px}

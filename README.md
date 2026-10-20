@@ -1,4 +1,4 @@
-# BhuVista — Google Maps × Bihar BhuNaksha prototype
+# BhuVista v3 — Google Maps × Bihar BhuNaksha prototype
 
 A real full-stack JavaScript demo for exploring land parcels with satellite imagery. **It does not claim to be the official site or determine ownership.** The official cadastral image overlay requires the Bihar government service to be online, available to your network, and suitably georeferenced.
 
@@ -31,6 +31,38 @@ GOOGLE_MAPS_API_KEY=YOUR_GOOGLE_MAPS_API_KEY npm start
 ```
 
 Now Google Maps powers the basemap (Satellite, Map, Hybrid). Client-side API keys are visible to browsers, so **HTTP referrer restrictions and quota controls are essential**; do not use a server-secret unrestricted credential as the Maps key.
+
+## New in v3: practical map tools
+
+- **Measure distance and area**: click **Measure distance / area** in the top-right map controls; select Distance or Area and click the satellite map to add measurement points. Use Undo, Clear, or Done. When measuring an area, the app also shows approximate perimeter. Measurements are rough geodesic/small-area estimates, **not survey-grade land records**; they never claim official plot area.
+- **Copy map view link**: click **Copy link to this map view**. The URL remembers the basemap, center, zoom, and (if loaded) the seven official BhuNaksha village/sheet codes. Opening the link attempts to reload the official map and restore the camera. This requires the Bihar map service to work at the destination.
+- **Reopen last viewed village**: after loading a village, return to it using the official panel shortcut. The selected location *codes only* are saved in this browser's local storage; no ownership records or imported files are stored.
+- **Sharing limitations**: links to `localhost:3000` work only on the computer running the app. To share them publicly, deploy the app and then copy the link from its deployed domain. Imported GeoJSON cannot be included in a shareable link, so the app blocks sharing those views.
+
+### GitHub workflow: two real, incremental updates
+
+Starting with the **v2** repository, apply `BhuVista-01-measure.patch`, test, and commit the distance/area feature. Then apply `BhuVista-02-share.patch`, test, and commit the map-view sharing feature. Do not backdate commits; the actual timeline and separate feature commits are more useful than fabricated history.
+
+In PowerShell, from the repository root:
+
+```powershell
+git status --short
+git apply --check .\BhuVista-01-measure.patch
+git apply .\BhuVista-01-measure.patch
+npm.cmd test
+git add public/app.js public/index.html public/styles.css public/measure.js tests/measure.test.js server.js
+git commit -m "feat: add map distance and area measuring"
+
+git apply --check .\BhuVista-02-share.patch
+git apply .\BhuVista-02-share.patch
+npm.cmd test
+git add .gitignore README.md CHANGELOG.md package.json public/app.js public/index.html public/styles.css public/map-link.js server.js tests/map-link.test.js tests/server.test.js
+git commit -m "feat: share and restore map views"
+
+git push origin main
+```
+
+**Note:** Place both `.patch` files at your repository root before running these commands. If you edited v2 since uploading it, the patch may not apply cleanly. In that case review the differences, or use the complete v3 ZIP to compare changed files rather than overriding your own edits. Avoid staging the `.patch` files unless you want to keep them in the repo.
 
 ## What works today
 

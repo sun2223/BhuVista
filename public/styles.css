@@ -6,3 +6,23 @@
 .plot-preview {display:block;width:100%;height:auto;max-height:260px;object-fit:contain;margin:12px 0;background:#faf9f3;border:1px solid #d7e7dd;border-radius:9px;}
 .plot-preview-status {color:#5d7868;font-size:11px;line-height:1.6;margin-top:8px;}
 #official-plot-input:disabled {cursor:not-allowed;opacity:.55;}
+
+/* Feature: map-based distance and area exploration. */
+.map-action{display:block;width:100%;margin-top:12px;padding:10px 8px;border-radius:9px;border:1px solid #d3e6d8;background:#f5fbf7;color:#297251;font-size:11px;font-weight:800}
+.map-action.active{background:#226744;color:white}
+#map.is-measuring{cursor:crosshair!important}
+.measure-panel{position:absolute;z-index:12;top:90px;left:22px;width:270px;max-width:calc(100% - 300px);background:#fff;border:1px solid #e4ece5;border-radius:13px;box-shadow:0 7px 28px #1c4e3650;padding:15px}
+.measure-heading{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px;color:#234d3d}
+.measure-heading span{font-size:9px;color:#829b8b}
+.measure-modes{display:flex;gap:6px;margin:14px 0}
+.measure-choice{border:1px solid #d7e7dd;background:#f4f9f5;color:#56806b;border-radius:7px;padding:8px 11px;font-size:11px;font-weight:700;flex:1}
+.measure-choice.active{background:#2b7b54;border-color:#2b7b54;color:#fff}
+.measure-result{font:800 18px Manrope,sans-serif;color:#1e6243;min-height:28px}
+.measure-panel p{font-size:11px;color:#799083;line-height:1.5;margin:8px 0 12px}
+.measure-actions{display:flex;gap:6px}
+.measure-actions button{flex:1;border:1px solid #d5e8da;background:#f6faf7;color:#356e50;border-radius:7px;padding:8px 5px;font-size:11px;font-weight:700}
+.measure-actions button:last-child{background:#256b48;color:#fff;border-color:#256b48}
+.measure-actions button:disabled{opacity:.45;cursor:not-allowed}
+.measure-warning{display:block;margin-top:12px;font-size:10px;line-height:1.5;color:#ab8552}
+@media(max-width:1050px){.measure-panel{max-width:calc(100% - 270px)}}
+@media(max-width:760px){.measure-panel{top:255px;left:12px;width:min(255px,calc(100% - 24px));max-width:none;padding:12px}.measure-heading span{display:none}}

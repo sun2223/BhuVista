@@ -115,7 +115,7 @@ const server=http.createServer(async(req,res)=>{
   try {
     if(url.pathname.startsWith('/api/'))return await handleAPI(url,res);
     const pathname=url.pathname==='/'?'index.html':decodeURIComponent(url.pathname).replace(/^\/+/, '');
-    if(!['index.html','app.js','styles.css','sample.geojson'].includes(pathname))return fail(res,404,'Not found');
+    if(!['index.html','app.js','measure.js','styles.css','sample.geojson'].includes(pathname))return fail(res,404,'Not found');
     const filepath=path.join(root,'public',pathname);
     const body=await readFile(filepath);
     return send(res,200,body,mime[path.extname(pathname)]||'application/octet-stream');

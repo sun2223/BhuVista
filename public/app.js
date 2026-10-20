@@ -1,9 +1,10 @@
+import {pathDistance,polygonArea,formatDistance,formatArea} from './measure.js';
 /* BhuVista: two modes, a self-contained example and an official WMS image overlay.
  * Never treat the overlay as survey-grade or automatically infer ownership. */
 const $ = id => document.getElementById(id);
 const OFFICIAL='https://bhunaksha.bihar.gov.in/10/indexmain.jsp';
 const LEVEL_NAMES=['District / जिला','Sub-division / अनुमंडल','Circle / अंचल','Mauza / मौजा','Survey type','Map instance','Sheet number'];
-const state={mode:'demo',mapKind:null,map:null,googleData:null,featureLayer:null,labels:[],dataset:null,selected:null,neighborNos:new Set(),sheet:null,overlay:null,opacity:.85,showBoundaries:true,base:'satellite',googleKey:null,levels:[],lookupToken:0,plotPreviewUrl:null};
+const state={mode:'demo',mapKind:null,map:null,googleData:null,featureLayer:null,labels:[],dataset:null,selected:null,neighborNos:new Set(),sheet:null,overlay:null,opacity:.85,showBoundaries:true,base:'satellite',googleKey:null,levels:[],lookupToken:0,plotPreviewUrl:null,measure:{active:false,type:'distance',points:[],layers:[]}};
 let toastTimer;
 function toast(message){$('toast').textContent=message;$('toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('show'),6000);}
 async function api(path){const r=await fetch(path);let data;try{data=await r.json();}catch{throw new Error('The map server returned an unexpected response.');}if(!r.ok)throw new Error(data.error||'Map request failed');return data;}
@@ -32,11 +33,11 @@ function fitBounds(b){if(!state.map)return;if(state.mapKind==='google'){state.ma
 function makeGoogleKeyUrl(key){return `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly`;}
 function loadGoogle(key){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=makeGoogleKeyUrl(key);s.async=true;s.onload=()=>window.google?.maps?resolve():reject(new Error('Google SDK unavailable'));s.onerror=()=>reject(new Error('Google Maps could not load'));document.head.appendChild(s);});}
 function initGoogle(){state.mapKind='google';state.map=new google.maps.Map($('map'),{center:{lat:25.569,lng:85.065},zoom:17,mapTypeId:'hybrid',streetViewControl:false,fullscreenControl:false,zoomControl:true,mapTypeControl:false,gestureHandling:'greedy',styles:[{featureType:'poi',stylers:[{visibility:'off'}]}]});
- state.googleData=state.map.data;state.map.data.addListener('click',e=>selectPlot(String(e.feature.getProperty('plotNo'))));state.map.addListener('click',e=>onMapClick(e.latLng.lat(),e.latLng.lng()));$('map-provider').textContent='Google Maps · cadastral data overlay';}
+ state.googleData=state.map.data;state.map.data.addListener('click',e=>state.measure.active?addMeasurementPoint(e.latLng.lat(),e.latLng.lng()):selectPlot(String(e.feature.getProperty('plotNo'))));state.map.addListener('click',e=>handleMapClick(e.latLng.lat(),e.latLng.lng()));$('map-provider').textContent='Google Maps · cadastral data overlay';}
 function initLeaflet(){if(!window.L)throw new Error('OpenStreetMap library unavailable. Check your internet connection.');state.mapKind='leaflet';state.map=L.map('map',{zoomControl:false}).setView([25.569,85.065],16);L.control.zoom({position:'bottomleft'}).addTo(state.map);state.tiles={roadmap:L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'© OpenStreetMap contributors'}),satellite:L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Imagery © Esri, Maxar, Earthstar Geographics and GIS User Community'}),hybrid:null};
  state.tiles.hybrid=state.tiles.satellite;
  state.tiles.satellite.addTo(state.map);
- state.map.on('click',e=>onMapClick(e.latlng.lat,e.latlng.lng));$('map-provider').textContent='Esri satellite imagery · add Google API key for Google Maps';}
+ state.map.on('click',e=>handleMapClick(e.latlng.lat,e.latlng.lng));$('map-provider').textContent='Esri satellite imagery · add Google API key for Google Maps';}
 function clearMapLayers(){
  if(state.mapKind==='google'){
   state.map.data.forEach(f=>state.map.data.remove(f));
@@ -58,12 +59,12 @@ function refreshStyle(){
  }else if(state.featureLayer){state.featureLayer.eachLayer(layer=>{const f=layer.feature;if(f)layer.setStyle(styleFor(String(f.properties.plotNo)));});state.labels.forEach(m=>m.setOpacity(state.showBoundaries?1:0));}
  if(state.overlay){if(state.mapKind==='google')state.overlay.setOpacity(state.showBoundaries?state.opacity:0);else state.overlay.setOpacity(state.showBoundaries?state.opacity:0);}
 }
-function drawDataset(data){clearMapLayers();state.dataset=data;state.sheet=null;state.selected=null;state.neighborNos=new Set();
+function drawDataset(data){resetMeasurement();clearMapLayers();state.dataset=data;state.sheet=null;state.selected=null;state.neighborNos=new Set();
  if(state.mapKind==='google'){
   state.map.data.addGeoJson(data);
   for(const f of data.features){const pt=coordCenter(f);const marker=new google.maps.Marker({map:state.map,position:pt,icon:{path:google.maps.SymbolPath.CIRCLE,scale:0},label:{text:String(f.properties.plotNo),fontSize:'10px',fontWeight:'700',color:'#134532'},clickable:false});state.labels.push(marker);}
  }else{
-  state.featureLayer=L.geoJSON(data,{style:f=>styleFor(String(f.properties.plotNo)),onEachFeature:(f,layer)=>layer.on('click',e=>{L.DomEvent.stopPropagation(e);selectPlot(String(f.properties.plotNo));})}).addTo(state.map);
+  state.featureLayer=L.geoJSON(data,{style:f=>styleFor(String(f.properties.plotNo)),onEachFeature:(f,layer)=>layer.on('click',e=>{L.DomEvent.stopPropagation(e);if(state.measure.active)addMeasurementPoint(e.latlng.lat,e.latlng.lng);else selectPlot(String(f.properties.plotNo));})}).addTo(state.map);
   for(const f of data.features){const p=coordCenter(f);const label=L.marker([p.lat,p.lng],{interactive:false,icon:L.divIcon({className:'',html:`<span class="map-label">${escaped(f.properties.plotNo)}</span>`,iconSize:[40,16],iconAnchor:[20,8]})}).addTo(state.map);state.labels.push(label);}
  }
  refreshStyle();fitGeoJSON(data);clearDetails();
@@ -131,6 +132,75 @@ async function requestOfficialPlot(){
     $('detail-body').innerHTML=`<div class="notice">${escaped(e.message)} This government service may not support plot-image requests from our app. Please open official BhuNaksha and select the plot there.</div>`;
   }finally{if(token===state.lookupToken)button.disabled=!state.sheet;}
 }
+function handleMapClick(lat,lng){
+ if(state.measure.active){addMeasurementPoint(lat,lng);return;}
+ onMapClick(lat,lng);
+}
+function discardMeasurementLayers(){
+ for(const layer of state.measure.layers){
+  if(state.mapKind==='google')layer.setMap(null);
+  else if(state.mapKind==='leaflet')state.map.removeLayer(layer);
+ }
+ state.measure.layers=[];
+}
+function renderMeasurement(){
+ discardMeasurementLayers();
+ const {points,type}=state.measure;
+ const coords=points.map(p=>[p.lat,p.lng]);
+ if(state.mapKind==='google'){
+  if(points.length>=2){
+   const geom=type==='area'&&points.length>=3
+    ?new google.maps.Polygon({map:state.map,paths:points,strokeColor:'#e9c36d',strokeWeight:3,strokeOpacity:1,fillColor:'#f9b964',fillOpacity:.23,clickable:false})
+    :new google.maps.Polyline({map:state.map,path:points,strokeColor:'#e9c36d',strokeWeight:3,clickable:false});
+   state.measure.layers.push(geom);
+  }
+  for(const p of points){state.measure.layers.push(new google.maps.Circle({map:state.map,center:p,radius:2.5,strokeColor:'#613e18',strokeWeight:2,fillColor:'#ffebac',fillOpacity:1,clickable:false}));}
+ }else if(state.mapKind==='leaflet'){
+  if(points.length>=2){
+   const options={color:'#f8bb53',weight:3,opacity:1,interactive:false};
+   const layer=type==='area'&&points.length>=3?L.polygon(coords,{...options,fillColor:'#f8bb53',fillOpacity:.25}):L.polyline(coords,options);
+   state.measure.layers.push(layer.addTo(state.map));
+  }
+  for(const p of points)state.measure.layers.push(L.circleMarker([p.lat,p.lng],{radius:5,color:'#59391c',weight:2,fillColor:'#ffebac',fillOpacity:1,interactive:false}).addTo(state.map));
+ }
+ const ready=type==='area'?points.length>=3:points.length>=2;
+ const value=ready?(type==='area'?`${formatArea(polygonArea(points))} · perimeter ${formatDistance(pathDistance(points,true))}`:formatDistance(pathDistance(points))):`Add ${Math.max(0,(type==='area'?3:2)-points.length)} more point(s)`;
+ $('measure-result').textContent=value;
+ $('measure-guidance').textContent=`${points.length} point(s). Click the map to add ${type==='area'?'corners':'a route'}, then use Done.`;
+ $('measure-undo').disabled=points.length===0;
+ $('measure-clear').disabled=points.length===0;
+}
+function addMeasurementPoint(lat,lng){
+ if(!Number.isFinite(lat)||!Number.isFinite(lng))return;
+ const pts=state.measure.points;
+ if(pts.length>=100){toast('Maximum 100 measurement points.');return;}
+ const point={lat,lng};
+ if(pts.length&&pathDistance([pts.at(-1),point])<.05)return;
+ pts.push(point);
+ renderMeasurement();
+}
+function setMeasurementActive(active){
+ state.measure.active=active;
+ $('measure-panel').classList.toggle('hidden',!active);
+ $('measure-toggle').classList.toggle('active',active);
+ $('measure-toggle').setAttribute('aria-pressed',String(active));
+ $('map').classList.toggle('is-measuring',active);
+ if(state.mapKind==='google')state.map.setOptions({draggableCursor:active?'crosshair':null});
+ if(active)renderMeasurement();
+}
+function resetMeasurement(){
+ discardMeasurementLayers();
+ state.measure.points=[];
+ if(state.measure.active)renderMeasurement();
+}
+function chooseMeasureType(type){
+ state.measure.type=type;
+ state.measure.points=[];
+ for(const choice of ['distance','area']){
+  const b=$(`measure-${choice}`);b.classList.toggle('active',choice===type);b.setAttribute('aria-pressed',String(choice===type));
+ }
+ renderMeasurement();
+}
 function clearDetails(){ $('detail-source').textContent='PLOT EXPLORER';$('detail-title').textContent='Select any plot';$('detail-body').innerHTML='<div class="empty-graphic">⌗</div><p>Click inside a parcel boundary to inspect its plot number and nearby parcels.</p>';$('detail-card').style.display='block';}
 async function onMapClick(lat,lng){if(state.mode!=='official'||!state.sheet)return;
  const token=++state.lookupToken;releasePlotPreview();
@@ -141,7 +211,7 @@ async function onMapClick(lat,lng){if(state.mode!=='official'||!state.sheet)retu
  $('detail-body').innerHTML=`<div class="detail-row"><span>Latitude</span><strong>${lat.toFixed(6)}</strong></div><div class="detail-row"><span>Longitude</span><strong>${lng.toFixed(6)}</strong></div><div class="notice">${escaped(d.message)} The overlay may be shifted; verify the exact parcel directly on BhuNaksha.</div>${d.found?'<button id="preview-from-click" class="primary-btn" type="button">Request plot-image preview ↗</button>':''}`;
  if(d.found){$('official-plot-input').value=d.plotNo;$('preview-from-click').addEventListener('click',requestOfficialPlot);}
  }catch(e){if(token!==state.lookupToken)return;$('detail-title').textContent='Lookup unavailable';$('detail-body').innerHTML=`<p>${escaped(e.message)}</p><div class="notice">Check the visible plot label on the official BhuNaksha map.</div>`;}}
-function updateMode(mode){++state.lookupToken;releasePlotPreview();state.mode=mode;const official=mode==='official';$('official-plot-input').disabled=true;$('official-plot-button').disabled=true;$('demo-controls').classList.toggle('hidden',official);$('official-controls').classList.toggle('hidden',!official);$('tab-demo').classList.toggle('active',!official);$('tab-official').classList.toggle('active',official);$('map-hint').textContent=official?'✧ Choose a village to load its official cadastral layer':'✧ Click a sample plot to see its details and neighbors';if(!official){state.sheet=null;drawDataset(rawSamples());$('area-label').textContent='Sample plots · near Patna, Bihar';$('source-status').textContent='Sample dataset';$('detail-card').style.display='block';}else{clearMapLayers();state.sheet=null;state.dataset=null;clearDetails();$('area-label').textContent='Select official Bihar location';$('source-status').textContent='Official map (pending)';}if(innerWidth<760)document.body.classList.remove('sidebar-open');}
+function updateMode(mode){resetMeasurement();++state.lookupToken;releasePlotPreview();state.mode=mode;const official=mode==='official';$('official-plot-input').disabled=true;$('official-plot-button').disabled=true;$('demo-controls').classList.toggle('hidden',official);$('official-controls').classList.toggle('hidden',!official);$('tab-demo').classList.toggle('active',!official);$('tab-official').classList.toggle('active',official);$('map-hint').textContent=official?'✧ Choose a village to load its official cadastral layer':'✧ Click a sample plot to see its details and neighbors';if(!official){state.sheet=null;drawDataset(rawSamples());$('area-label').textContent='Sample plots · near Patna, Bihar';$('source-status').textContent='Sample dataset';$('detail-card').style.display='block';}else{clearMapLayers();state.sheet=null;state.dataset=null;clearDetails();$('area-label').textContent='Select official Bihar location';$('source-status').textContent='Official map (pending)';}if(innerWidth<760)document.body.classList.remove('sidebar-open');}
 function populateLevels(){const c=$('level-fields');c.innerHTML='';LEVEL_NAMES.forEach((name,index)=>{
  const div=document.createElement('div');div.className='level-field';const label=document.createElement('label');label.textContent=name;label.htmlFor=`level-${index}`;
  const select=document.createElement('select');select.id=`level-${index}`;select.disabled=index!==0;select.innerHTML='<option value="">Select…</option>';select.addEventListener('change',()=>onLevelChange(index));div.append(label,select);c.append(div);state.levels.push(select);
@@ -152,7 +222,7 @@ async function loadLevel(index){if(index>=7)return;const codes=state.levels.slic
 }
 function onLevelChange(index){++state.lookupToken;releasePlotPreview();state.sheet=null;$('official-plot-input').disabled=true;$('official-plot-button').disabled=true;for(let i=index+1;i<7;i++){state.levels[i].value='';state.levels[i].disabled=true;state.levels[i].innerHTML='<option value="">Select…</option>';}$('load-sheet').disabled=!state.levels.every(x=>x.value);if(state.levels[index].value&&index<6)loadLevel(index+1).catch(e=>toast(e.message));}
 async function loadSheet(){const codes=state.levels.map(s=>s.value);if(codes.some(x=>!x))return;++state.lookupToken;releasePlotPreview();$('official-plot-input').disabled=true;$('official-plot-button').disabled=true;const btn=$('load-sheet');btn.disabled=true;btn.textContent='Loading government map…';
- try{const d=await api('/api/sheet?codes='+encodeURIComponent(codes.join(',')));clearMapLayers();state.dataset=null;state.sheet=d;state.selected=null;state.neighborNos=new Set();
+ try{const d=await api('/api/sheet?codes='+encodeURIComponent(codes.join(',')));resetMeasurement();clearMapLayers();state.dataset=null;state.sheet=d;state.selected=null;state.neighborNos=new Set();
  if(state.mapKind==='google'){state.overlay=new google.maps.GroundOverlay(d.mapImage,d.bounds,{opacity:state.opacity,clickable:false});state.overlay.setMap(state.map);}
  else{state.overlay=L.imageOverlay(d.mapImage,[[d.bounds.south,d.bounds.west],[d.bounds.north,d.bounds.east]],{opacity:state.opacity,interactive:false}).addTo(state.map);}
  fitBounds(d.bounds);refreshStyle();$('official-plot-input').disabled=false;$('official-plot-button').disabled=false;$('area-label').textContent=state.levels[3].selectedOptions[0]?.textContent||'Bihar cadastral map';$('source-status').textContent='Government map imagery';$('detail-source').textContent='LIVE OFFICIAL MAP';$('detail-title').textContent='BhuNaksha overlay';$('detail-body').innerHTML='<div class="notice">This is official cadastral map imagery, but placement over satellite imagery is approximate. Click a location to attempt official plot identification. Blank or unsupported replies are not proof of ownership.</div>';
@@ -164,6 +234,12 @@ async function importFile(file){if(!file)return;try{if(file.size>10*1024*1024)th
  const data={type:'FeatureCollection',features};state.mode='imported';drawDataset(data);$('area-label').textContent=`Imported · ${file.name}`;$('source-status').textContent='Your GeoJSON (unverified)';$('map-hint').textContent='✧ Click a polygon from your imported file';toast(`${features.length} parcel geometries loaded. Data remains in this browser tab.`);
  }catch(e){toast('Import failed: '+e.message);}finally{$('import-file').value='';}}
 async function boot(){
+ $('measure-toggle').addEventListener('click',()=>setMeasurementActive(!state.measure.active));
+ $('measure-distance').addEventListener('click',()=>chooseMeasureType('distance'));
+ $('measure-area').addEventListener('click',()=>chooseMeasureType('area'));
+ $('measure-undo').addEventListener('click',()=>{state.measure.points.pop();renderMeasurement();});
+ $('measure-clear').addEventListener('click',resetMeasurement);
+ $('measure-done').addEventListener('click',()=>setMeasurementActive(false));
  $('tab-demo').addEventListener('click',()=>updateMode('demo'));$('tab-official').addEventListener('click',()=>updateMode('official'));
  $('plot-search').addEventListener('keydown',e=>{if(e.key==='Enter')selectPlot($('plot-search').value.trim());});$('search-button').addEventListener('click',()=>selectPlot($('plot-search').value.trim()));$('try-1206').addEventListener('click',()=>{state.mode==='official'&&updateMode('demo');selectPlot('1206');});$('try-1211').addEventListener('click',()=>{state.mode==='official'&&updateMode('demo');selectPlot('1211');});
  $('import-file').addEventListener('change',e=>importFile(e.target.files?.[0]));$('load-sheet').addEventListener('click',loadSheet);$('official-plot-button').addEventListener('click',requestOfficialPlot);$('official-plot-input').addEventListener('keydown',e=>{if(e.key==='Enter')requestOfficialPlot();});$('opacity').addEventListener('input',e=>{state.opacity=Number(e.target.value)/100;$('opacity-value').textContent=`${e.target.value}%`;refreshStyle();});$('boundary-toggle').addEventListener('change',e=>{state.showBoundaries=e.target.checked;refreshStyle();});document.querySelectorAll('.base-btn').forEach(btn=>btn.addEventListener('click',()=>setBase(btn.dataset.base)));$('close-detail').addEventListener('click',()=>$('detail-card').style.display='none');$('open-sidebar').addEventListener('click',()=>document.body.classList.add('sidebar-open'));$('close-sidebar').addEventListener('click',()=>document.body.classList.remove('sidebar-open'));
